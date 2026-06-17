@@ -40,19 +40,10 @@ public class RecommendQueryService {
 		log.info("[Recommend] 요청 시작 - userId={}", userId);
 
 		Optional<List<UUID>> cachedIds = cacheService.getCachedRecommendations(userId);
+
 		if (cachedIds.isPresent()) {
 			log.info("[Recommend] 캐시 히트 - userId={}, ids={}", userId, cachedIds.get());
-			List<RecommendedPerformanceResponseDto> responses = performanceFacade
-				.findRecommendedPerformancesByIds(cachedIds.get())
-				.stream()
-				.map(req -> new RecommendedPerformanceResponseDto(
-					req.performanceId(),
-					req.title(),
-					req.StartAt()
-				))
-				.toList();
-			log.info("[Recommend] 캐시 반환 완료 - userId={}, count={}", userId, responses.size());
-			return responses;
+			return getRecommendFromCache(cachedIds.get(), userId);
 		}
 		log.info("[Recommend] 캐시 미스 - userId={}", userId);
 
@@ -82,6 +73,21 @@ public class RecommendQueryService {
 		cacheService.saveRecommendations(userId, performanceIds);
 		log.info("[Recommend] 캐시 저장 완료 - userId={}", userId);
 
+		return responses;
+	}
+
+	// 캐시로 불러오는 로직을 분리
+	private List<RecommendedPerformanceResponseDto> getRecommendFromCache(List<UUID> cachedIds, UUID userId) {
+		List<RecommendedPerformanceResponseDto> responses = performanceFacade
+				.findRecommendedPerformancesByIds(cachedIds)
+				.stream()
+				.map(req -> new RecommendedPerformanceResponseDto(
+						req.performanceId(),
+						req.title(),
+						req.StartAt()
+				))
+				.toList();
+		log.info("[Recommend] 캐시 반환 완료 - userId={}, count={}", userId, responses.size());
 		return responses;
 	}
 }
