@@ -56,35 +56,33 @@ public class CouponToUserConsumerServiceImpl implements CouponToUserConsumerServ
                                 return new CouponException(ResponseCode.COUPON_NOT_FOUND);
                             });
 
-                    if (!redisOperationService.hasKey(redisKey)) {
-                        redisOperationService.initializeQuantity(redisKey, coupon.getQuantity());
-                    }
+                    initializeQuantity(redisKey, coupon);
                     Long currentQuantity = redisOperationService.getCurrentQuantity(redisKey);
                     if (currentQuantity == null || currentQuantity <= 0) {
                         log.warn("쿠폰이 모두 소진되었습니다. couponId: {}, currentQuantity: {}", couponId, currentQuantity);
                         return createFailedMessage(message, "쿠폰이 모두 소진되었습니다.");
                     }
+
                     // Lua 스크립트 실행
                     Long updatedQuantity = redisOperationService.evalScript(
                             redisKey, issuedUserKey, userId.toString());
-                    if (updatedQuantity == -1) {
-                        log.warn("쿠폰 수량이 부족합니다. couponId: {}", couponId);
-                        recordFailMetric("쿠폰이 모두 소진되었습니다.");
-                        throw new CouponException(ResponseCode.COUPON_QUANTITY_EXCEPTION);
-                    }
-                    if (updatedQuantity == -2) {
-                        log.error("이미 발급에 성공한 유저입니다. userId: {}", userId);
-                        recordFailMetric("이미 발급에 성공한 유저입니다.");
-                        throw new CouponException(ResponseCode.COUPON_HAS_USER);
-                    }
-                    if (updatedQuantity == 0) {
-                        coupon.updateQuantity(updatedQuantity, userId, coupon);
-                        coupon.delete(UUID.fromString("00000000-0000-0000-0000-000000000000"));
-                        return createSuccessMessage(message, coupon);
-                    }
+                    QuantityUpdatedResponseType updatedResponse = QuantityUpdatedResponseType.valueOf(updatedQuantity)
+                            .orElseThrow();
 
-                    coupon.updateQuantity(updatedQuantity, userId, coupon);
-                    return createSuccessMessage(message, coupon);
+                    switch(updatedResponse) {
+                        case NO_QUANTITY:
+                            log.warn("쿠폰 수량이 부족합니다. couponId: {}", couponId);
+                            recordFailMetric("쿠폰이 모두 소진되었습니다.");
+                            throw new CouponException(ResponseCode.COUPON_QUANTITY_EXCEPTION);
+                        case ALREADY_APPLIED:
+                            log.error("이미 발급에 성공한 유저입니다. userId: {}", userId);
+                            recordFailMetric("이미 발급에 성공한 유저입니다.");
+                            throw new CouponException(ResponseCode.COUPON_HAS_USER);
+                        default:
+                            coupon.updateQuantity(updatedQuantity, userId, coupon);
+                            coupon.delete(UUID.fromString("00000000-0000-0000-0000-000000000000"));
+                            return createSuccessMessage(message, coupon);
+                    }
                 }finally {
                     lock.unlock();
                 }
@@ -101,6 +99,12 @@ public class CouponToUserConsumerServiceImpl implements CouponToUserConsumerServ
         }catch (Exception e) {
             log.error("예상치 못한 예외 발생: ", e);
             return createFailedMessage(message, "서버 에러");
+        }
+    }
+
+    private void initializeQuantity(String redisKey, Coupon coupon) {
+        if (!redisOperationService.hasKey(redisKey)) {
+            redisOperationService.initializeQuantity(redisKey, coupon.getQuantity());
         }
     }
 
